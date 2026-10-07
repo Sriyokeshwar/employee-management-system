@@ -1,156 +1,146 @@
 const employeeModel = require('../models/employeeModels');
 
-/**
- * GET /api/employees
- * Retrieve all employees
- */
-async function getEmployees(req, res, next) {
+function validateEmployee(body) {
+    const reqBody = body || {};
+    const fields = ['name', 'role', 'email', 'phone'];
+
+    const missingField = fields.find(
+        (field) => !String(reqBody[field] || '').trim()
+    );
+
+    return missingField
+        ? `The ${missingField} field is required.`
+        : null;
+}
+
+
+// Get All
+async function getEmployees(req, res) {
     try {
         const employees = await employeeModel.getAllEmployees();
 
-        return res.status(200).json({
-            success: true,
-            count: employees.length,
-            data: employees,
-        });
+        res.json(employees);
+
     } catch (error) {
-        next(error);
+        console.error(error);
+
+        res.status(500).json({
+            message: 'Unable to fetch employees.'
+        });
     }
 }
 
-/**
- * GET /api/employees/:id
- * Retrieve single employee by ID
- */
-async function getEmployeeById(req, res, next) {
-    try {
-        const employee = await employeeModel.getEmployeeById(req.params.id);
 
-        if (!employee) {
-            return res.status(404).json({
-                success: false,
-                message: 'Employee not found.',
-            });
-        }
+// Create
+async function addEmployee(req, res) {
 
-        return res.status(200).json({
-            success: true,
-            data: employee,
+    const validationError = validateEmployee(req.body);
+
+    if (validationError) {
+        return res.status(400).json({
+            message: validationError
         });
-    } catch (error) {
-        next(error);
     }
-}
 
-/**
- * POST /api/employees
- * Create a new employee
- */
-async function addEmployee(req, res, next) {
     const { name, role, email, phone } = req.body;
 
     try {
-        // Check for duplicate email
-        const existing = await employeeModel.getEmployeeByEmail(email);
-        if (existing) {
-            return res.status(409).json({
-                success: false,
-                message: 'An employee with this email already exists.',
-            });
-        }
 
-        const newEmployee = await employeeModel.createEmployee(
-            name,
-            role,
-            email,
-            phone
-        );
+        const newEmployee =
+            await employeeModel.createEmployee(
+                name.trim(),
+                role.trim(),
+                email.trim(),
+                phone.trim()
+            );
 
-        return res.status(201).json({
-            success: true,
-            message: 'Employee added successfully.',
-            data: newEmployee,
-        });
+        res.status(201).json(newEmployee);
+
     } catch (error) {
-        next(error);
+
+        console.error(error);
+
+        res.status(500).json({
+            message: 'Unable to create employee.'
+        });
     }
 }
 
-/**
- * PUT /api/employees/:id
- * Update an existing employee
- */
-async function editEmployee(req, res, next) {
-    const id = req.params.id;
+
+// Update
+async function editEmployee(req, res) {
+
+    const validationError = validateEmployee(req.body);
+
+    if (validationError) {
+        return res.status(400).json({
+            message: validationError
+        });
+    }
+
     const { name, role, email, phone } = req.body;
 
     try {
-        // Verify employee exists
-        const currentEmployee = await employeeModel.getEmployeeById(id);
-        if (!currentEmployee) {
+
+        const updatedEmployee =
+            await employeeModel.updateEmployee(
+                req.params.id,
+                name.trim(),
+                role.trim(),
+                email.trim(),
+                phone.trim()
+            );
+
+        if (!updatedEmployee) {
             return res.status(404).json({
-                success: false,
-                message: 'Employee not found.',
+                message: 'Employee not found.'
             });
         }
 
-        // Check if email is in use by another employee
-        const existingWithEmail = await employeeModel.getEmployeeByEmail(email);
-        if (existingWithEmail && existingWithEmail.id !== id) {
-            return res.status(409).json({
-                success: false,
-                message: 'An employee with this email already exists.',
-            });
-        }
+        res.json(updatedEmployee);
 
-        const updatedEmployee = await employeeModel.updateEmployee(
-            id,
-            name,
-            role,
-            email,
-            phone
-        );
-
-        return res.status(200).json({
-            success: true,
-            message: 'Employee updated successfully.',
-            data: updatedEmployee,
-        });
     } catch (error) {
-        next(error);
+
+        console.error(error);
+
+        res.status(500).json({
+            message: 'Unable to update employee.'
+        });
     }
 }
 
-/**
- * DELETE /api/employees/:id
- * Remove an employee
- */
-async function removeEmployee(req, res, next) {
-    const id = req.params.id;
+
+// Delete
+async function removeEmployee(req, res) {
 
     try {
-        const employee = await employeeModel.getEmployeeById(id);
-        if (!employee) {
+
+        const success =
+            await employeeModel.deleteEmployee(
+                req.params.id
+            );
+
+        if (!success) {
             return res.status(404).json({
-                success: false,
-                message: 'Employee not found.',
+                message: 'Employee not found.'
             });
         }
 
-        await employeeModel.deleteEmployee(id);
+        res.status(204).send();
 
-        return res.status(200).json({
-            success: true,
-            message: 'Employee deleted successfully.',
-        });
     } catch (error) {
-        next(error);
+
+        console.error(error);
+
+        res.status(500).json({
+            message: 'Unable to delete employee.'
+        });
     }
 }
+
 
 module.exports = {
     getEmployees,
-    getEmployeeById,
     addEmployee,
     editEmployee,
     removeEmployee,

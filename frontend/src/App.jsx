@@ -1,305 +1,528 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import api from './services/api';
-import Header from './components/Header';
-import StatsCards from './components/StatsCards';
-import SearchBar from './components/SearchBar';
-import EmployeeTable from './components/EmployeeTable';
-import EmployeeModal from './components/EmployeeModal';
-import DeleteConfirmModal from './components/DeleteConfirmModal';
-import Toast from './components/Toast';
-import { AlertCircleIcon, RefreshIcon } from './components/Icons';
-import './App.css';
+import { useEffect, useState } from 'react'
+import './App.css'
 
-export default function App() {
-  // --- Data & Network State ---
-  const [employees, setEmployees] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [apiStatus, setApiStatus] = useState('checking'); // 'connected' | 'disconnected' | 'checking'
-  const [fetchError, setFetchError] = useState(null);
+// Backend API URL - Intha path-la dhaan employee data-va fetch, create, update, delete panrom
+const API_URL = 'http://localhost:5000/api/employees'
 
-  // --- Search, Filter & Sort State ---
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedRole, setSelectedRole] = useState('all');
-  const [sortBy, setSortBy] = useState('newest');
+// Form-la irukra fields-oda initial empty values (Reset panradhuku use agum)
+const emptyForm = {
+  name: '',
+  role: '',
+  email: '',
+  phone: ''
+}
 
-  // --- Modal State (Add / Edit) ---
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingEmployee, setEditingEmployee] = useState(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [modalServerError, setModalServerError] = useState('');
+function App() {
+  // --- STATE DECLARATIONS (Variables to manage component state) ---
+  const [employees, setEmployees] = useState([]) // Server-la irundhu varra employee list-ah store panra array
+  const [form, setForm] = useState(emptyForm) // Input box-la user type panra details-ah store panra object
+  const [editingId, setEditingId] = useState(null) // Oru employee-a edit panrapdi id-a store pannum (Null-na pudhu entry)
+  const [loading, setLoading] = useState(true) // Data load agra varaikum loading state-ah track panra boolean
+  const [submitting, setSubmitting] = useState(false) // Form submit aagum podhu button disable/enable panra state
+  const [error, setError] = useState('') // Errors-ah user-ku display panradhuku error message state
 
-  // --- Delete Modal State ---
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [employeeToDelete, setEmployeeToDelete] = useState(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  // --- Toast Notification State ---
-  const [toast, setToast] = useState(null);
-
-  const showToast = useCallback((message, type = 'success') => {
-    setToast({ message, type, id: Date.now() });
-  }, []);
-
-  // Check health and load employees
-  const loadEmployees = useCallback(async (isBackgroundRefresh = false) => {
-    if (isBackgroundRefresh) {
-      setIsRefreshing(true);
-    } else {
-      setIsLoading(true);
-    }
-    setFetchError(null);
-
-    try {
-      // Fetch employees
-      const data = await api.getEmployees();
-      setEmployees(data);
-      setApiStatus('connected');
-    } catch (err) {
-      console.error('Failed to load employees:', err);
-      setFetchError(err.message || 'Unable to connect to the backend server.');
-      setApiStatus('disconnected');
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, []);
-
+  // --- READ OPERATION - GET (Component mount aana odane data-va fetch pannum) ---
   useEffect(() => {
-    loadEmployees();
-  }, [loadEmployees]);
+    fetchEmployees()
+  }, [])
 
-  // Extract unique roles for the filter dropdown
-  const availableRoles = useMemo(() => {
-    const rolesSet = new Set();
-    employees.forEach((emp) => {
-      if (emp.role && emp.role.trim()) {
-        rolesSet.add(emp.role.trim());
+  // Backend-la irundhu employee details-ah GET panra function
+  async function fetchEmployees() {
+    try {
+      const response = await fetch(API_URL)
+
+      // Response correct-ah illana error throw pannum
+      if (!response.ok) {
+        throw new Error(
+          'Unable to connect to the employee database.'
+        )
       }
-    });
-    return Array.from(rolesSet).sort();
-  }, [employees]);
 
-  // Client-side search, filter and sort
-  const filteredEmployees = useMemo(() => {
-    let result = [...employees];
+      const data = await response.json()
 
-    // Search filter
-    if (searchTerm.trim()) {
-      const q = searchTerm.toLowerCase().trim();
-      result = result.filter((emp) => {
-        const idMatch = String(emp.id).toLowerCase().includes(q) || `emp-${emp.id}`.toLowerCase().includes(q);
-        const nameMatch = (emp.name || '').toLowerCase().includes(q);
-        const emailMatch = (emp.email || '').toLowerCase().includes(q);
-        const roleMatch = (emp.role || '').toLowerCase().includes(q);
-        return idMatch || nameMatch || emailMatch || roleMatch;
-      });
+      setEmployees(data) // Datang-ah state-la save panrom
+      setError('') // Error irundha clear panrom
+    } catch (requestError) {
+      setError(requestError.message) // Error catch panni state-la set panrom
+    } finally {
+      setLoading(false) // Loading mudinjadhum false aakidurom
     }
-
-    // Role filter
-    if (selectedRole && selectedRole !== 'all') {
-      result = result.filter(
-        (emp) => (emp.role || '').toLowerCase() === selectedRole.toLowerCase()
-      );
-    }
-
-    // Sorting
-    result.sort((a, b) => {
-      if (sortBy === 'newest') {
-        const timeA = a.created_at ? new Date(a.created_at).getTime() : a.id;
-        const timeB = b.created_at ? new Date(b.created_at).getTime() : b.id;
-        return timeB - timeA;
-      }
-      if (sortBy === 'oldest') {
-        const timeA = a.created_at ? new Date(a.created_at).getTime() : a.id;
-        const timeB = b.created_at ? new Date(b.created_at).getTime() : b.id;
-        return timeA - timeB;
-      }
-      if (sortBy === 'name_asc') {
-        return (a.name || '').localeCompare(b.name || '');
-      }
-      if (sortBy === 'name_desc') {
-        return (b.name || '').localeCompare(a.name || '');
-      }
-      return 0;
-    });
-
-    return result;
-  }, [employees, searchTerm, selectedRole, sortBy]);
-
-  // Reset search filters
-  function handleResetFilters() {
-    setSearchTerm('');
-    setSelectedRole('all');
-    setSortBy('newest');
   }
 
-  // --- Modal Open Handlers ---
-  function handleOpenAddModal() {
-    setEditingEmployee(null);
-    setModalServerError('');
-    setIsModalOpen(true);
+  // --- FORM CHANGE HANDLER (Input box-la type panra pothu state-a update panradhu) ---
+  function handleChange(event) {
+    setForm({
+      ...form,
+      [event.target.name]: event.target.value
+    })
   }
 
-  function handleOpenEditModal(employee) {
-    setEditingEmployee(employee);
-    setModalServerError('');
-    setIsModalOpen(true);
-  }
+  // --- CREATE (POST) & UPDATE (PUT) OPERATIONS ---
+  async function handleSubmit(event) {
+    event.preventDefault() // Page reload-ah prevent panrom
 
-  function handleCloseModal() {
-    if (isSubmitting) return;
-    setIsModalOpen(false);
-    setEditingEmployee(null);
-    setModalServerError('');
-  }
-
-  // --- Submit Handler (Create or Update) ---
-  async function handleFormSubmit(formData) {
-    setIsSubmitting(true);
-    setModalServerError('');
+    setSubmitting(true)
+    setError('')
 
     try {
-      if (editingEmployee) {
-        // PUT update
-        const updated = await api.updateEmployee(editingEmployee.id, formData);
-        setEmployees((prev) =>
-          prev.map((emp) => (emp.id === editingEmployee.id ? updated : emp))
-        );
-        showToast('Employee updated successfully.', 'success');
-      } else {
-        // POST create
-        const created = await api.createEmployee(formData);
-        setEmployees((prev) => [created, ...prev]);
-        showToast('Employee added successfully.', 'success');
+      // editingId irundha PUT method (Update), illana POST method (Create) use pannum
+      const response = await fetch(
+        editingId
+          ? `${API_URL}/${editingId}`
+          : API_URL,
+        {
+          method: editingId ? 'PUT' : 'POST',
+
+          headers: {
+            'Content-Type': 'application/json'
+          },
+
+          body: JSON.stringify(form) // Form data-va JSON format-ku maathi anjurom
+        }
+      )
+
+      // Status 204 (No Content) irundha null, illana JSON convert pannum
+      const result =
+        response.status === 204
+          ? null
+          : await response.json()
+
+      if (!response.ok) {
+        throw new Error(
+          result?.message || 'Unable to save employee.'
+        )
       }
 
-      setIsModalOpen(false);
-      setEditingEmployee(null);
-    } catch (err) {
-      console.error('Save employee error:', err);
-      setModalServerError(err.message || 'Unable to save employee. Please try again.');
-      showToast(err.message || 'Unable to save employee. Please try again.', 'error');
+      // Success aana form-a empty panni, editingId-a null aakidurom
+      setForm(emptyForm)
+      setEditingId(null)
+
+      // Updated list-ah server-la irundhu thirumba fetch panrom
+      await fetchEmployees()
+
+    } catch (requestError) {
+      setError(requestError.message)
+
     } finally {
-      setIsSubmitting(false);
+      setSubmitting(false)
     }
   }
 
-  // --- Delete Handlers ---
-  function handleOpenDeleteModal(employee) {
-    setEmployeeToDelete(employee);
-    setIsDeleteModalOpen(true);
+  // --- EDIT BUTTON CLICK HANDLER (Oru employee-a edit panra mood-ku kondu varum) ---
+  function beginEdit(employee) {
+    setEditingId(employee.id) // Ethu edit aagudhu nu id-a track panrom
+
+    // Form-la andha employee-oda existing details-ah fill panrom
+    setForm({
+      name: employee.name,
+      role: employee.role,
+      email: employee.email,
+      phone: employee.phone
+    })
+
+    setError('')
+
+    // Screen-oda mela smooth-ah scroll panrom
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth'
+    })
   }
 
-  function handleCloseDeleteModal() {
-    if (isDeleting) return;
-    setIsDeleteModalOpen(false);
-    setEmployeeToDelete(null);
-  }
+  // --- DELETE OPERATION ---
+  async function deleteEmployee(id) {
 
-  async function handleConfirmDelete(id) {
-    setIsDeleting(true);
+    // User-ta confirmation kekum
+    if (
+      !window.confirm(
+        'Delete this employee record?'
+      )
+    ) {
+      return
+    }
 
     try {
-      await api.deleteEmployee(id);
-      setEmployees((prev) => prev.filter((emp) => emp.id !== id));
-      showToast('Employee deleted successfully.', 'success');
-      setIsDeleteModalOpen(false);
-      setEmployeeToDelete(null);
-    } catch (err) {
-      console.error('Delete employee error:', err);
-      showToast(err.message || 'Unable to delete employee. Please try again.', 'error');
-    } finally {
-      setIsDeleting(false);
+      const response = await fetch(
+        `${API_URL}/${id}`,
+        {
+          method: 'DELETE'
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error(
+          'Unable to delete employee.'
+        )
+      }
+
+      // Delete aanavudan UI-la irundhu andha employee-a filter panni remove panrom
+      setEmployees((currentEmployees) =>
+        currentEmployees.filter(
+          (employee) => employee.id !== id
+        )
+      )
+
+    } catch (requestError) {
+      setError(requestError.message)
     }
   }
 
-  const isFiltered = Boolean(searchTerm || (selectedRole && selectedRole !== 'all'));
+  // --- CANCEL EDIT OPERATION ---
+  function cancelEdit() {
+    setEditingId(null)
+    setForm(emptyForm)
+    setError('')
+  }
 
   return (
-    <div className="dashboard-shell">
-      {/* Toast Notification */}
-      <Toast toast={toast} onClose={() => setToast(null)} />
+    <main className="app-shell">
 
-      <div className="dashboard-container">
-        {/* Top Header */}
-        <Header
-          onAddEmployee={handleOpenAddModal}
-          onRefresh={() => loadEmployees(true)}
-          isRefreshing={isRefreshing}
-          apiStatus={apiStatus}
-        />
+      {/* HEADER SECTION (Title and Total Members count) */}
+      <header className="page-header">
 
-        {/* Global Connection Error Banner */}
-        {fetchError && (
-          <div className="connection-error-card" role="alert">
-            <div className="connection-error-body">
-              <AlertCircleIcon size={24} className="text-danger" />
-              <div>
-                <h3 className="error-card-title">Unable to connect to the backend server</h3>
-                <p className="error-card-desc">
-                  {fetchError} Please ensure the backend server is running on <code>http://localhost:5000</code> and the MySQL database is accessible.
-                </p>
-              </div>
+        <div>
+
+          <p className="eyebrow">
+            People operations
+          </p>
+
+          <h1>
+            Employee directory
+          </h1>
+
+          <p className="subtitle">
+            Keep your team details accurate,
+            accessible, and up to date.
+          </p>
+
+        </div>
+
+        <div className="record-count">
+
+          <strong>
+            {employees.length}
+          </strong>
+
+          <span>
+            team members
+          </span>
+
+        </div>
+
+      </header>
+
+
+      <section className="workspace">
+
+        {/* FORM SECTION (Add / Edit Employee Form) */}
+        <form
+          className="employee-form"
+          onSubmit={handleSubmit}
+        >
+
+          <div className="section-heading">
+
+            <div>
+
+              <span className="section-number">
+                01
+              </span>
+
+              {/* Editing state-ah பொறுத்து Title 'Edit employee' nu illa 'Add employee' nu maarum */}
+              <h2>
+                {editingId
+                  ? 'Edit employee'
+                  : 'Add employee'}
+              </h2>
+
             </div>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => loadEmployees(false)}
-            >
-              <RefreshIcon size={14} />
-              Retry Connection
-            </button>
+
+            <span className="required-note">
+              All fields required
+            </span>
+
           </div>
-        )}
 
-        {/* Dynamic Statistics Cards */}
-        <StatsCards employees={employees} />
 
-        {/* Search, Filter & Sort Toolbar */}
-        <SearchBar
-          searchTerm={searchTerm}
-          onSearchChange={setSearchTerm}
-          selectedRole={selectedRole}
-          onRoleChange={setSelectedRole}
-          sortBy={sortBy}
-          onSortChange={setSortBy}
-          availableRoles={availableRoles}
-          totalCount={employees.length}
-          filteredCount={filteredEmployees.length}
-          onResetFilters={handleResetFilters}
-        />
+          {/* ERROR MESSAGE DISPLAY */}
+          {error && (
+            <div
+              className="notice"
+              style={{
+                color: 'red',
+                marginBottom: '10px'
+              }}
+            >
+              {error}
+            </div>
+          )}
 
-        {/* Main Employee Data Table */}
-        <EmployeeTable
-          employees={filteredEmployees}
-          isLoading={isLoading}
-          isFiltered={isFiltered}
-          onEdit={handleOpenEditModal}
-          onDelete={handleOpenDeleteModal}
-          onAddEmployee={handleOpenAddModal}
-          onClearFilters={handleResetFilters}
-        />
-      </div>
 
-      {/* Add / Edit Employee Modal */}
-      <EmployeeModal
-        isOpen={isModalOpen}
-        onClose={handleCloseModal}
-        onSubmit={handleFormSubmit}
-        employee={editingEmployee}
-        isSubmitting={isSubmitting}
-        serverError={modalServerError}
-      />
+          {/* FORM INPUT FIELDS GRID */}
+          <div className="form-grid">
 
-      {/* Delete Confirmation Modal */}
-      <DeleteConfirmModal
-        isOpen={isDeleteModalOpen}
-        employee={employeeToDelete}
-        onClose={handleCloseDeleteModal}
-        onConfirm={handleConfirmDelete}
-        isDeleting={isDeleting}
-      />
-    </div>
-  );
+            <label>
+              Full name
+
+              <input
+                name="name"
+                value={form.name}
+                onChange={handleChange}
+                placeholder="e.g. Priya Sharma"
+                required
+              />
+
+            </label>
+
+
+            <label>
+              Role
+
+              <input
+                name="role"
+                value={form.role}
+                onChange={handleChange}
+                placeholder="e.g. Product designer"
+                required
+              />
+
+            </label>
+
+
+            <label>
+              Email address
+
+              <input
+                type="email"
+                name="email"
+                value={form.email}
+                onChange={handleChange}
+                placeholder="name@company.com"
+                required
+              />
+
+            </label>
+
+
+            <label>
+              Phone number
+
+              <input
+                name="phone"
+                value={form.phone}
+                onChange={handleChange}
+                placeholder="+1 555 000 0000"
+                required
+              />
+
+            </label>
+
+          </div>
+
+
+          {/* FORM ACTION BUTTONS (Cancel & Submit) */}
+          <div className="form-actions">
+
+            {/* Editing panra podhu mattum cancel button-a kaatum */}
+            {editingId && (
+
+              <button
+                className="button button-quiet"
+                type="button"
+                onClick={cancelEdit}
+              >
+                Cancel
+              </button>
+
+            )}
+
+
+            <button
+              className="button button-primary"
+              type="submit"
+              disabled={submitting}
+            >
+
+              {/* Submitting aagum podhu text 'Saving...' nu maarum */}
+              {submitting
+                ? 'Saving...'
+                : editingId
+                  ? 'Save changes'
+                  : 'Add employee'}
+
+              <span>
+                ↗
+              </span>
+
+            </button>
+
+          </div>
+
+        </form>
+
+
+        {/* TABLE SECTION (Employee List Table) */}
+        <section className="directory-section">
+
+          <div className="section-heading">
+
+            <div>
+
+              <span className="section-number">
+                02
+              </span>
+
+              <h2>
+                All employees
+              </h2>
+
+            </div>
+
+            <span className="live-indicator">
+              Live directory
+            </span>
+
+          </div>
+
+
+          <div className="table-wrap">
+
+            <table>
+
+              <thead>
+
+                <tr>
+                  <th>Employee</th>
+                  <th>Role</th>
+                  <th>Contact</th>
+                  <th>Phone</th>
+                  <th aria-label="Actions"></th>
+                </tr>
+
+              </thead>
+
+
+              <tbody>
+
+                {/* Loading aagum podhu loading message-a kaatum */}
+                {loading ? (
+
+                  <tr>
+
+                    <td
+                      colSpan="5"
+                      className="empty-state"
+                    >
+                      Loading directory...
+                    </td>
+
+                  </tr>
+
+                ) : employees.length === 0 ? (
+
+                  /* Employees list empty-ah irundha 'No employees yet' message kaatum */
+                  <tr>
+
+                    <td
+                      colSpan="5"
+                      className="empty-state"
+                    >
+                      No employees yet.
+                      Add the first team member above.
+                    </td>
+
+                  </tr>
+
+                ) : (
+
+                  /* Employees data irundha loop panni table row-la display panrom */
+                  employees.map((employee) => (
+
+                    <tr key={employee.id}>
+
+                      <td>
+
+                        {/* Employee name-oda first letter-a vachu Avatar icon create panrom */}
+                        <span className="avatar">
+                          {employee.name
+                            .charAt(0)
+                            .toUpperCase()}
+                        </span>
+
+                        <strong>
+                          {employee.name}
+                        </strong>
+
+                      </td>
+
+
+                      <td>
+                        {employee.role}
+                      </td>
+
+
+                      <td>
+
+                        <a
+                          href={`mailto:${employee.email}`}
+                        >
+                          {employee.email}
+                        </a>
+
+                      </td>
+
+
+                      <td>
+                        {employee.phone}
+                      </td>
+
+
+                      <td className="actions">
+
+                        {/* EDIT BUTTON */}
+                        <button
+                          title={`Edit ${employee.name}`}
+                          onClick={() =>
+                            beginEdit(employee)
+                          }
+                        >
+                          Edit
+                        </button>
+
+
+                        {/* DELETE BUTTON */}
+                        <button
+                          className="delete-action"
+                          title={`Delete ${employee.name}`}
+                          onClick={() =>
+                            deleteEmployee(
+                              employee.id
+                            )
+                          }
+                        >
+                          Delete
+                        </button>
+
+                      </td>
+
+                    </tr>
+
+                  ))
+
+                )}
+
+              </tbody>
+
+            </table>
+
+          </div>
+
+        </section>
+
+      </section>
+
+    </main>
+  )
 }
+
+export default App
